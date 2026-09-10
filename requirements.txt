@@ -1,6 +1,4 @@
 phonenumbers
 requests
 pyfiglet
-time
-googlesearch
 googlesearch-python
