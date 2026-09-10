@@ -1,3 +1,2 @@
 phonenumbers
-requests
 pyfiglet
