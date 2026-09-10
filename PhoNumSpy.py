@@ -3,15 +3,16 @@ import time
 
 import phonenumbers
 import pyfiglet
-from googlesearch import search
+import requests
 from phonenumbers import carrier, timezone
 from phonenumbers.phonenumberutil import region_code_for_number
-from requests.exceptions import HTTPError
+
+BRAVE_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
 
 print("\n")
 Ascii_Art = pyfiglet.figlet_format("PhoNumSpy")
 print(Ascii_Art)
-version = "Version 1.1"
+version = "Version 1.2"
 print(version)
 print("\n")
 time.sleep(1)
@@ -22,7 +23,8 @@ maininput = input(
 ).strip()
 
 lookuptarget = maininput.lstrip("+")
-fileoutput = open(f"{maininput}_results.txt", "w", encoding="utf-8")
+report_name = f"{maininput}_results.txt"
+fileoutput = open(report_name, "w", encoding="utf-8")
 
 fileoutput.write("\n")
 fileoutput.write(Ascii_Art)
@@ -52,44 +54,88 @@ except phonenumbers.NumberParseException as exc:
     fileoutput.close()
     raise SystemExit(1)
 
+if not phonenumbers.is_possible_number(target):
+    print("[-] The supplied phone number is not possible according to numbering-plan metadata.")
+    fileoutput.write("[-] The supplied phone number is not possible according to numbering-plan metadata.\n")
+    fileoutput.close()
+    raise SystemExit(1)
+
 TZ = timezone.time_zones_for_number(target)
 CC = region_code_for_number(target)
 CR = carrier.name_for_number(target, "en")
 
-print("Location: ", TZ)
+print("Location metadata: ", TZ)
 print("Country Code: ", CC)
-print("Carrier: ", CR)
+print("Carrier: ", CR or "Unknown / unavailable")
 
 fileoutput.write("-------------------------\n")
 fileoutput.write("Phone Number Informations\n")
 fileoutput.write("-------------------------\n\n")
-fileoutput.write(f"Location: {TZ}\n")
+fileoutput.write(f"Location metadata: {TZ}\n")
 fileoutput.write(f"Country Code: {CC}\n")
-fileoutput.write(f"Carrier: {CR}\n\n")
+fileoutput.write(f"Carrier: {CR or 'Unknown / unavailable'}\n\n")
 
 
-def safe_search(query, num_results=10, sleep_interval=3, region=None):
-    """Run a Google search without crashing the program on rate limits."""
+def brave_search(query, count=10, country=None):
+    """Search the public web using Brave Search API.
+
+    Requires BRAVE_SEARCH_API_KEY in the environment. Returns a list of
+    dictionaries with title, url and description. If the key is not set or
+    the API request fails, an empty list is returned and the program continues.
+    """
+    api_key = os.getenv("BRAVE_SEARCH_API_KEY", "").strip()
+    if not api_key:
+        return []
+
+    params = {
+        "q": query,
+        "count": max(1, min(int(count), 20)),
+        "search_lang": "en",
+        "safesearch": "moderate",
+    }
+    if country:
+        params["country"] = country.upper()
+
+    headers = {
+        "Accept": "application/json",
+        "X-Subscription-Token": api_key,
+    }
+
     try:
-        return list(
-            search(
-                query,
-                num_results=num_results,
-                sleep_interval=sleep_interval,
-                region=region,
-            )
+        response = requests.get(
+            BRAVE_ENDPOINT,
+            params=params,
+            headers=headers,
+            timeout=15,
         )
-    except HTTPError as exc:
-        status = getattr(exc.response, "status_code", None)
-        if status == 429:
-            print("[!] Google rate limit reached (HTTP 429). Skipping this search.")
-            return []
-        print(f"[!] Search HTTP error: {exc}")
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as exc:
+        print(f"[!] Brave Search API error: {exc}")
         return []
-    except Exception as exc:
-        print(f"[!] Search error: {exc}")
+    except ValueError:
+        print("[!] Brave Search API returned an invalid JSON response.")
         return []
 
+    web = payload.get("web") or {}
+    results = web.get("results") or []
+
+    cleaned = []
+    for item in results:
+        url = item.get("url")
+        if not url:
+            continue
+        cleaned.append(
+            {
+                "title": item.get("title") or "Untitled result",
+                "url": url,
+                "description": item.get("description") or "",
+            }
+        )
+    return cleaned
+
+
+api_configured = bool(os.getenv("BRAVE_SEARCH_API_KEY", "").strip())
 
 print("\n--------------------------")
 print("Phone Number Web Footprint")
@@ -99,20 +145,26 @@ fileoutput.write("--------------------------\n")
 fileoutput.write("Phone Number Web Footprint\n")
 fileoutput.write("--------------------------\n\n")
 
-footprint_results = safe_search(
-    lookuptarget,
-    num_results=10,
-    sleep_interval=3,
-    region=(CC.lower() if CC else None),
-)
-
-if footprint_results:
-    for footprintsearch in footprint_results:
-        print(f"[+] Result found on: {footprintsearch}")
-        fileoutput.write(f"{footprintsearch}\n")
+if not api_configured:
+    msg = "[!] Web search disabled: BRAVE_SEARCH_API_KEY is not configured."
+    print(msg)
+    fileoutput.write(msg + "\n")
 else:
-    print("[-] No web footprint found")
-    fileoutput.write("[-] No web footprint found\n")
+    footprint_results = brave_search(
+        f'"{maininput}" OR "{lookuptarget}"',
+        count=10,
+        country=CC,
+    )
+
+    if footprint_results:
+        for item in footprint_results:
+            print(f"[+] {item['title']}: {item['url']}")
+            fileoutput.write(f"[+] {item['title']}\n{item['url']}\n")
+            if item["description"]:
+                fileoutput.write(f"    {item['description']}\n")
+    else:
+        print("[-] No public web results returned")
+        fileoutput.write("[-] No public web results returned\n")
 
 print("\n--------------------------------------------------")
 print("Targeted Searches on Online Phone Number Providers")
@@ -130,26 +182,28 @@ except FileNotFoundError:
     print("[!] websites.txt was not found. Skipping provider searches.")
 
 found_provider_result = False
-for site in varwebsites:
-    query = f"allinurl:{site} {lookuptarget}"
-    results = safe_search(
-        query,
-        num_results=1,
-        sleep_interval=5,
-        region=(CC.lower() if CC else None),
+
+if not api_configured:
+    print("[!] Provider searches skipped because BRAVE_SEARCH_API_KEY is not configured.")
+    fileoutput.write(
+        "[!] Provider searches skipped because BRAVE_SEARCH_API_KEY is not configured.\n"
     )
+else:
+    for site in varwebsites:
+        query = f'site:{site} ("{maininput}" OR "{lookuptarget}")'
+        results = brave_search(query, count=3, country=CC)
 
-    for querysearch in results:
-        print(f"[+] Result found: {querysearch}")
-        fileoutput.write(f"{querysearch}\n")
-        found_provider_result = True
+        for item in results:
+            print(f"[+] {site}: {item['url']}")
+            fileoutput.write(f"[+] {site}: {item['url']}\n")
+            found_provider_result = True
 
-    # Extra delay between provider queries to reduce the chance of HTTP 429.
-    time.sleep(5)
+        # Keep API usage modest and predictable.
+        time.sleep(1)
 
-if not found_provider_result:
-    print("[-] No result found")
-    fileoutput.write("[-] No result found\n")
+    if not found_provider_result:
+        print("[-] No provider-domain result returned")
+        fileoutput.write("[-] No provider-domain result returned\n")
 
 print("\n")
 print(Ascii_Art)
@@ -163,5 +217,4 @@ fileoutput.write("\n\n")
 fileoutput.close()
 
 filepath = os.getcwd()
-filename = f"{maininput}_results.txt"
-print(f"{maininput} Logs saved in {filepath} as '{filename}'")
+print(f"{maininput} Logs saved in {filepath} as '{report_name}'")
