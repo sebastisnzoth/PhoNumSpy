@@ -1,4 +1,6 @@
 import os
+import shutil
+import subprocess
 import time
 
 import phonenumbers
@@ -6,58 +8,60 @@ import pyfiglet
 from phonenumbers import carrier, geocoder, timezone
 from phonenumbers.phonenumberutil import region_code_for_number
 
+VERSION = "Version 2.0"
+
+
+def run_phoneinfoga(number):
+    """Run an installed PhoneInfoga binary as an optional OSINT companion."""
+    binary = shutil.which("phoneinfoga")
+    if not binary:
+        return None, "PhoneInfoga is not installed or is not in PATH."
+
+    try:
+        completed = subprocess.run(
+            [binary, "scan", "-n", number],
+            capture_output=True,
+            text=True,
+            timeout=90,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return None, "PhoneInfoga scan timed out."
+    except OSError as exc:
+        return None, f"Could not start PhoneInfoga: {exc}"
+
+    output = (completed.stdout or "").strip()
+    error = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        return None, error or f"PhoneInfoga exited with code {completed.returncode}."
+    return output or "No additional results returned.", None
+
+
 print("\n")
-Ascii_Art = pyfiglet.figlet_format("PhoNumSpy")
-print(Ascii_Art)
-version = "Version 1.3"
-print(version)
+ascii_art = pyfiglet.figlet_format("PhoNumSpy")
+print(ascii_art)
+print(VERSION)
 print("\n")
-time.sleep(1)
+time.sleep(0.5)
 
 maininput = input(
     "Input the phone number using international format: +(prefix)(phonenumber) "
     "ES: +447455869664\n-->"
 ).strip()
 
-report_name = f"{maininput}_results.txt"
-fileoutput = open(report_name, "w", encoding="utf-8")
-
-fileoutput.write("\n")
-fileoutput.write(Ascii_Art)
-fileoutput.write("\n\n")
-fileoutput.write(version)
-fileoutput.write("\n\n")
-
-print("\n-------------------------")
-print("Target:" + maininput)
-print("-------------------------\n")
-print("Processing...\n")
-
-fileoutput.write("-------------------------\n")
-fileoutput.write(f"Target: {maininput}\n")
-fileoutput.write("-------------------------\n\n")
-fileoutput.write("Processing...\n\n")
-
-print("-------------------------")
-print("Phone Number Information")
-print("-------------------------\n")
+safe_name = "".join(ch for ch in maininput if ch.isdigit() or ch in "+-") or "phone"
+report_name = f"{safe_name}_results.txt"
 
 try:
     target = phonenumbers.parse(maininput, None)
 except phonenumbers.NumberParseException as exc:
     print(f"[-] Invalid phone number: {exc}")
-    fileoutput.write(f"[-] Invalid phone number: {exc}\n")
-    fileoutput.close()
     raise SystemExit(1)
 
 possible = phonenumbers.is_possible_number(target)
 valid = phonenumbers.is_valid_number(target)
-
 if not possible:
-    msg = "[-] The supplied phone number is not possible according to numbering-plan metadata."
-    print(msg)
-    fileoutput.write(msg + "\n")
-    fileoutput.close()
+    print("[-] The supplied phone number is not possible according to numbering-plan metadata.")
     raise SystemExit(1)
 
 TZ = timezone.time_zones_for_number(target)
@@ -68,9 +72,21 @@ E164 = phonenumbers.format_number(target, phonenumbers.PhoneNumberFormat.E164)
 INTERNATIONAL = phonenumbers.format_number(target, phonenumbers.PhoneNumberFormat.INTERNATIONAL)
 NATIONAL = phonenumbers.format_number(target, phonenumbers.PhoneNumberFormat.NATIONAL)
 
+type_map = {
+    phonenumbers.PhoneNumberType.FIXED_LINE: "Fixed line",
+    phonenumbers.PhoneNumberType.MOBILE: "Mobile",
+    phonenumbers.PhoneNumberType.FIXED_LINE_OR_MOBILE: "Fixed line or mobile",
+    phonenumbers.PhoneNumberType.TOLL_FREE: "Toll free",
+    phonenumbers.PhoneNumberType.PREMIUM_RATE: "Premium rate",
+    phonenumbers.PhoneNumberType.VOIP: "VoIP",
+    phonenumbers.PhoneNumberType.UNKNOWN: "Unknown",
+}
+number_type = type_map.get(phonenumbers.number_type(target), "Other")
+
 info_lines = [
     f"Possible number: {possible}",
     f"Valid number: {valid}",
+    f"Number type: {number_type}",
     f"Country/Region code: {CC}",
     f"Numbering-plan area: {AREA}",
     f"Time-zone metadata: {TZ}",
@@ -80,46 +96,47 @@ info_lines = [
     f"National format: {NATIONAL}",
 ]
 
+print("\n-------------------------")
+print("Phone Number Information")
+print("-------------------------\n")
 for line in info_lines:
     print(line)
 
-fileoutput.write("-------------------------\n")
-fileoutput.write("Phone Number Information\n")
-fileoutput.write("-------------------------\n\n")
-for line in info_lines:
-    fileoutput.write(line + "\n")
-
-notice = (
-    "\n[!] Privacy notice: location, time-zone, area and carrier values are "
-    "numbering-plan metadata. They are not live GPS/location data."
+print(
+    "\n[!] Privacy notice: area, time-zone and carrier values are numbering-plan "
+    "metadata, not live GPS/location data."
 )
-print(notice)
-fileoutput.write(notice + "\n")
 
 print("\n--------------------------")
-print("Public Web Search")
+print("Optional PhoneInfoga OSINT")
 print("--------------------------\n")
+phoneinfoga_output, phoneinfoga_error = run_phoneinfoga(E164)
+if phoneinfoga_error:
+    print(f"[!] {phoneinfoga_error}")
+    print("    Install PhoneInfoga separately if you want the optional public-OSINT scan.")
+else:
+    print(phoneinfoga_output)
 
-web_notice = (
-    "[!] Phone-number web profiling is not enabled in PhoNumSpy 1.3. "
-    "This version focuses on local numbering-plan metadata and report generation."
-)
-print(web_notice)
-fileoutput.write("\n--------------------------\n")
-fileoutput.write("Public Web Search\n")
-fileoutput.write("--------------------------\n\n")
-fileoutput.write(web_notice + "\n")
+with open(report_name, "w", encoding="utf-8") as fileoutput:
+    fileoutput.write(ascii_art + "\n")
+    fileoutput.write(VERSION + "\n\n")
+    fileoutput.write("Phone Number Information\n")
+    fileoutput.write("-------------------------\n")
+    for line in info_lines:
+        fileoutput.write(line + "\n")
+    fileoutput.write(
+        "\nPrivacy notice: area, time-zone and carrier values are numbering-plan "
+        "metadata, not live GPS/location data.\n"
+    )
+    fileoutput.write("\nOptional PhoneInfoga OSINT\n")
+    fileoutput.write("--------------------------\n")
+    if phoneinfoga_error:
+        fileoutput.write(f"{phoneinfoga_error}\n")
+    else:
+        fileoutput.write(phoneinfoga_output + "\n")
 
 print("\n")
-print(Ascii_Art)
-print("\n")
-
-fileoutput.write("\n\n")
-fileoutput.write(Ascii_Art)
-fileoutput.write("\n\n")
-fileoutput.write(version)
-fileoutput.write("\n\n")
-fileoutput.close()
-
-filepath = os.getcwd()
-print(f"{maininput} Logs saved in {filepath} as '{report_name}'")
+print(ascii_art)
+print(VERSION)
+print(f"\n{E164} report saved in {os.getcwd()} as '{report_name}'")
+print("Use only for lawful public-source research and numbers you are authorized to investigate.")
