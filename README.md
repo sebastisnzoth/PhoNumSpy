@@ -1,26 +1,42 @@
 # PhoNumSpy
-PhoNumSpy is an intelligence (OSINT) information gathering tool used to get the main informations about a phone number like Location, Country Code, City and Carrier; the algorithm performs a Web Footprint, a Social Network Footprint Search and a Targeted Search on all the Temporary Phone Number Providers on the Internet.
-# Features
-• Phone Number Main Informations
 
-• Phone Number Web Footprint Search
+PhoNumSpy is a small OSINT utility for inspecting public metadata and web references associated with a phone number.
 
-• Phone Numebr Social Network Footprint
+## Features
 
-• Phone Number Targeted Search on all the Temporary Phone Number Providers on the Internet
+- Phone-number metadata (country/region, time zones, carrier when available)
+- Public web-footprint search
+- Targeted searches against the domains listed in `websites.txt`
+- TXT report output
+- Graceful handling of Google HTTP 429 rate limits
+- Python 3 compatible
 
-• TXT Output
-# Installation
-```
-# git clone
-git clone https://github.com/CyberNDR/PhoNumSpy.git
+> Location data shown by the tool is numbering-plan/time-zone metadata. It is not live GPS tracking.
 
-# change from current directory to PhoNumSpy
+## Installation
+
+```bash
+git clone https://github.com/sebastisnzoth/PhoNumSpy.git
 cd PhoNumSpy
-
-# install requirements
-pip install -r requirements.txt
-
-# run the program
-python PhoNumSpy
+python3 -m pip install -r requirements.txt
 ```
+
+## Run
+
+```bash
+python3 PhoNumSpy.py
+```
+
+Enter a number in international E.164-style format, for example:
+
+```text
++447455869664
+```
+
+## Google rate limits
+
+PhoNumSpy uses `googlesearch-python` for public web searches. Google may return HTTP 429 when automated searches are rate-limited. Version 1.1 handles this condition without terminating the program and adds delays between targeted searches. A skipped search does not prove that no public result exists.
+
+## Responsible use
+
+Use PhoNumSpy only for lawful OSINT, research, or numbers you are authorized to investigate. Do not use the tool to harass, stalk, or invade another person's privacy.
